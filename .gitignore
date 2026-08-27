@@ -23,6 +23,8 @@ tracking/
 src/models/artifacts/
 artifacts/
 *.log
+catboost_info/
+lightning_logs/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
