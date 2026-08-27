@@ -11,13 +11,12 @@ venv/
 ENV/
 
 # Data & Database files
-data/
+/data/
 *.csv
 *.parquet
 *.db
 *.sqlite
 *.sqlite3
-tracking/
 
 # Model artifacts and logs
 src/models/artifacts/
