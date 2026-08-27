@@ -198,10 +198,19 @@ class ModelRegistry:
 
 
 from src.models.lstm import LSTMModelWrapper
+from src.models.lightgbm import LightGBMModelWrapper
+from src.models.catboost import CatBoostModelWrapper
+from src.models.tabnet import TabNetModelWrapper
 
 # Register built-in models
 ModelRegistry.register("xgboost")(XGBoostModelWrapper)
 ModelRegistry.register("xgb")(XGBoostModelWrapper)
+ModelRegistry.register("lightgbm")(LightGBMModelWrapper)
+ModelRegistry.register("lgb")(LightGBMModelWrapper)
+ModelRegistry.register("catboost")(CatBoostModelWrapper)
+ModelRegistry.register("cb")(CatBoostModelWrapper)
+ModelRegistry.register("tabnet")(TabNetModelWrapper)
+ModelRegistry.register("tab_net")(TabNetModelWrapper)
 ModelRegistry.register("random_forest")(RandomForestModelWrapper)
 ModelRegistry.register("rf")(RandomForestModelWrapper)
 ModelRegistry.register("logistic_regression")(LogisticRegressionModelWrapper)

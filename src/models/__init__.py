@@ -9,12 +9,18 @@ from src.models.registry import (
     RandomForestModelWrapper,
     LogisticRegressionModelWrapper,
 )
+from src.models.lightgbm import LightGBMModelWrapper
+from src.models.catboost import CatBoostModelWrapper
+from src.models.tabnet import TabNetModelWrapper
 from src.models.lstm import LSTMModelWrapper, LSTMClassifier, LSTMChurnNet
 
 __all__ = [
     "BaseModelWrapper",
     "ModelRegistry",
     "XGBoostModelWrapper",
+    "LightGBMModelWrapper",
+    "CatBoostModelWrapper",
+    "TabNetModelWrapper",
     "RandomForestModelWrapper",
     "LogisticRegressionModelWrapper",
     "LSTMModelWrapper",
