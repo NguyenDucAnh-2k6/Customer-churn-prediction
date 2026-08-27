@@ -229,7 +229,7 @@ def main():
     # If dataset is static, pit, or group_stratified and --cv is not specified, default to 5-fold CV
     cv_folds = args.cv
     if cv_folds is None and (
-        dataset_name in ["static", "pit", "point_in_time", "timeseries_pit", "timeseries_group", "group_stratified"]
+        dataset_name in ["static", "pit", "point_in_time", "timeseries_pit", "timeseries_group", "latest_group", "group_stratified"]
         or split_strategy in ["group_stratified", "stratified_group"]
     ):
         cv_folds = 5

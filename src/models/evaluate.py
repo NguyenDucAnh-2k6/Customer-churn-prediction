@@ -140,6 +140,23 @@ def calculate_metrics(
     r10_val = float(r10_row["recall_at_k"].values[0]) if not r10_row.empty else 0.0
     lift5_val = float(p5_row["lift_at_k"].values[0]) if not p5_row.empty else 1.0
 
+    # Calculate random baseline metrics based on prior churn rate
+    baseline_rate = (np.sum(y_true == 1) / len(y_true)) if len(y_true) > 0 else 0.0
+    random_baseline = {
+        "churn_rate": float(baseline_rate),
+        "roc_auc": 0.5000,
+        "pr_auc": float(baseline_rate),
+        "precision_top_5_pct": float(baseline_rate),
+        "recall_top_10_pct": 0.1000,
+        "lift_top_5_pct": 1.0000,
+        "accuracy": float(baseline_rate**2 + (1.0 - baseline_rate)**2),
+        "precision": float(baseline_rate),
+        "recall": float(baseline_rate),
+        "f1": float(baseline_rate),
+        "f1_macro": 0.5000,
+        "brier_score": float(baseline_rate * (1.0 - baseline_rate)),
+    }
+
     metrics = {
         "threshold": float(threshold),
         "roc_auc": roc_auc,
@@ -159,6 +176,7 @@ def calculate_metrics(
             "fn": int(fn),
             "tp": int(tp),
         },
+        "random_baseline": random_baseline,
         "top_k_metrics": df_top_k.to_dict(orient="records"),
         "support_total": int(len(y_true)),
         "support_positive": int(np.sum(y_true == 1)),
@@ -276,29 +294,72 @@ def extract_feature_importances(
 
 
 def format_metrics_table(metrics: Dict[str, Any], title: str = "Evaluation Summary") -> str:
-    """Format metrics dictionary into a readable markdown table string."""
+    """Format metrics dictionary into a readable markdown table string with Random Baseline comparison."""
     cm = metrics["confusion_matrix"]
+    total_samples = metrics.get("support_total", cm["tn"] + cm["fp"] + cm["fn"] + cm["tp"])
+    pos_samples = metrics.get("support_positive", cm["fn"] + cm["tp"])
+
+    # Baseline prior churn rate
+    p = (pos_samples / total_samples) if total_samples > 0 else 0.0
+    p_pct = p * 100.0
+
+    # Baseline metrics
+    base_roc = 0.5000
+    base_pr = p
+    base_p5 = p
+    base_r10 = 0.1000
+    base_acc = (p**2 + (1.0 - p)**2) if total_samples > 0 else 0.5000
+    base_prec = p
+    base_rec = p
+    base_f1 = p
+    base_f1_macro = 0.5000
+    base_brier = p * (1.0 - p)
+
+    # Model metrics
+    m_roc = metrics["roc_auc"]
+    m_pr = metrics["pr_auc"]
+    m_p5 = metrics.get("precision_top_5_pct", 0.0)
+    m_r10 = metrics.get("recall_top_10_pct", 0.0)
+    m_acc = metrics["accuracy"]
+    m_prec = metrics["precision"]
+    m_rec = metrics["recall"]
+    m_f1 = metrics["f1"]
+    m_macro = metrics["f1_macro"]
+    m_brier = metrics["brier_score"]
+
+    # Deltas & Lifts
+    d_roc = f"{m_roc - base_roc:+.4f}"
+    l_pr = f"{m_pr / base_pr:.2f}x ({m_pr - base_pr:+.4f})" if base_pr > 0 else "N/A"
+    d_p5 = f"{(m_p5 - base_p5)*100:+.2f}%"
+    l_r10 = f"{m_r10 / base_r10:.2f}x ({(m_r10 - base_r10)*100:+.2f}%)" if base_r10 > 0 else "N/A"
+    d_acc = f"{m_acc - base_acc:+.4f}"
+    l_prec = f"{m_prec / base_prec:.2f}x ({m_prec - base_prec:+.4f})" if base_prec > 0 else "N/A"
+    d_rec = f"{m_rec - base_rec:+.4f}"
+    l_f1 = f"{m_f1 / base_f1:.2f}x ({m_f1 - base_f1:+.4f})" if base_f1 > 0 else "N/A"
+    d_macro = f"{m_macro - base_f1_macro:+.4f}"
+    d_brier = f"{m_brier - base_brier:+.4f} (Better)" if m_brier < base_brier else f"{m_brier - base_brier:+.4f}"
+
     lines = [
         f"### {title}",
         "",
-        "| Metric | Value |",
-        "| :--- | :--- |",
-        f"| **Decision Threshold** | `{metrics['threshold']:.4f}` |",
-        f"| **ROC-AUC** | `{metrics['roc_auc']:.4f}` |",
-        f"| **PR-AUC (Average Precision)** | `{metrics['pr_auc']:.4f}` |",
-        f"| **Precision@Top 5%** | `{metrics.get('precision_top_5_pct', 0.0)*100:.2f}%` (Lift: `{metrics.get('lift_top_5_pct', 1.0):.2f}x`) |",
-        f"| **Recall@Top 10%** | `{metrics.get('recall_top_10_pct', 0.0)*100:.2f}%` |",
-        f"| **Accuracy** | `{metrics['accuracy']:.4f}` |",
-        f"| **Precision (Churn=1)** | `{metrics['precision']:.4f}` |",
-        f"| **Recall (Churn=1)** | `{metrics['recall']:.4f}` |",
-        f"| **F1-Score (Churn=1)** | `{metrics['f1']:.4f}` |",
-        f"| **Macro F1-Score** | `{metrics['f1_macro']:.4f}` |",
-        f"| **Brier Score** | `{metrics['brier_score']:.4f}` |",
+        f"| Metric | Model Value | Random Baseline (Prior Rate = {p_pct:.2f}%) | Delta / Lift vs. Baseline |",
+        "| :--- | :--- | :--- | :--- |",
+        f"| **Decision Threshold** | `{metrics['threshold']:.4f}` | `0.5000` | `-` |",
+        f"| **ROC-AUC** | `{m_roc:.4f}` | `{base_roc:.4f}` | `{d_roc}` |",
+        f"| **PR-AUC (Average Precision)** | `{m_pr:.4f}` | `{base_pr:.4f}` (Base Rate) | `{l_pr}` |",
+        f"| **Precision@Top 5%** | `{m_p5*100:.2f}%` (Lift: `{metrics.get('lift_top_5_pct', 1.0):.2f}x`) | `{base_p5*100:.2f}%` (Lift: `1.00x`) | `{d_p5}` |",
+        f"| **Recall@Top 10%** | `{m_r10*100:.2f}%` | `{base_r10*100:.2f}%` | `{l_r10}` |",
+        f"| **Accuracy** | `{m_acc:.4f}` | `{base_acc:.4f}` (Prior Match) | `{d_acc}` |",
+        f"| **Precision (Churn=1)** | `{m_prec:.4f}` | `{base_prec:.4f}` | `{l_prec}` |",
+        f"| **Recall (Churn=1)** | `{m_rec:.4f}` | `{base_rec:.4f}` (Prior Match) | `{d_rec}` |",
+        f"| **F1-Score (Churn=1)** | `{m_f1:.4f}` | `{base_f1:.4f}` | `{l_f1}` |",
+        f"| **Macro F1-Score** | `{m_macro:.4f}` | `{base_f1_macro:.4f}` | `{d_macro}` |",
+        f"| **Brier Score** | `{m_brier:.4f}` | `{base_brier:.4f}` (Lower is better) | `{d_brier}` |",
         "",
         "**Confusion Matrix:**",
         f"- True Negative (TN): `{cm['tn']:,}` | False Positive (FP): `{cm['fp']:,}`",
         f"- False Negative (FN): `{cm['fn']:,}` | True Positive (TP): `{cm['tp']:,}`",
-        f"- Total Samples: `{metrics['support_total']:,}` (Positive: `{metrics['support_positive']:,}`, Negative: `{metrics['support_negative']:,}`)",
+        f"- Total Samples: `{total_samples:,}` (Positive: `{pos_samples:,}`, Negative: `{total_samples - pos_samples:,}`)",
         "",
     ]
     if "top_k_metrics" in metrics and metrics["top_k_metrics"]:
