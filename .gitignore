@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Data & Database files
+data/
+*.csv
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+tracking/
+
+# Model artifacts and logs
+src/models/artifacts/
+artifacts/
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
