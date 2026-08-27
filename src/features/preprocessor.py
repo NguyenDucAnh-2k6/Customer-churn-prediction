@@ -22,11 +22,13 @@ class ChurnFeaturePreprocessor:
         self,
         static_ml_path: Optional[str] = "data/churn_ml_dataset.csv",
         merge_static_master: bool = False,
+        include_stock_features: bool = True,
         customer_id_col: str = "customer_id",
         snapshot_month_col: str = "snapshot_month",
     ):
         self.static_ml_path = static_ml_path
         self.merge_static_master = merge_static_master
+        self.include_stock_features = include_stock_features
         self.customer_id_col = customer_id_col
         self.snapshot_month_col = snapshot_month_col
         self.df_static_master = None
@@ -74,6 +76,7 @@ class ChurnFeaturePreprocessor:
         df = self.velocity_gen.transform(df)
 
         # Step 4: Financial & Quantitative Technical Indicators (Volatility, MACD, Drawdown, Beta)
-        df = self.financial_gen.transform(df)
+        if self.include_stock_features:
+            df = self.financial_gen.transform(df)
 
         return df

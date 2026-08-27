@@ -120,6 +120,20 @@ def parse_args() -> argparse.Namespace:
         help="Strategy 4: Drop all static account & tier categorical features (is_paid_tier, subscription_tier, demographics) to prevent shortcut learning",
     )
     parser.add_argument(
+        "--stock_features",
+        action="store_true",
+        default=True,
+        help="Include financial & stock-market technical indicators (peer_usage_zscore, engagement_macd, usage_drawdown_from_peak, active_days_volatility_3m) (Default: True)",
+    )
+    parser.add_argument(
+        "--no_stock_features",
+        "--drop_stock_features",
+        "--no-stock-features",
+        action="store_false",
+        dest="stock_features",
+        help="Ablation: Exclude financial & stock-market technical indicators",
+    )
+    parser.add_argument(
         "--db_url",
         type=str,
         default="sqlite:///tracking/optuna_study.db",
@@ -197,9 +211,10 @@ def main():
     mi_tag = "_noMI" if args.drop_low_mi else ""
     coll_tag = "_noColl" if args.drop_collinear else ""
     behav_tag = "_behavioral" if args.behavioral_only else ""
+    stock_tag = "" if args.stock_features else "_nostock"
     metric_tag = f"_{args.metric}" if args.metric != "roc_auc" else ""
-    study_name = args.study_name or f"{model_name}_churn_{dataset_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{metric_tag}"
-    artifacts_dir = args.artifacts_dir or f"src/models/artifacts/{dataset_name}_{model_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{metric_tag}"
+    study_name = args.study_name or f"{model_name}_churn_{dataset_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{stock_tag}{metric_tag}"
+    artifacts_dir = args.artifacts_dir or f"src/models/artifacts/{dataset_name}_{model_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{stock_tag}{metric_tag}"
 
     print(f"\n{'='*60}")
     print(f"🚀 Starting Experiment: Model='{model_name}' on Dataset='{dataset_name}'")
@@ -214,14 +229,17 @@ def main():
         weights_desc.append("UsageEngagement")
     if weights_desc:
         print(f"   Sample Weights: {' + '.join(weights_desc)}")
-    if args.drop_low_mi or args.drop_collinear or args.behavioral_only:
-        ablation_desc = []
-        if args.behavioral_only:
-            ablation_desc.append("Strategy 4: Pure Behavioral (Drop Static Tiers)")
-        if args.drop_low_mi:
-            ablation_desc.append("Drop Low-MI (Noisy)")
-        if args.drop_collinear:
-            ablation_desc.append("Drop Collinear (|r|>=0.90)")
+    
+    ablation_desc = []
+    if args.behavioral_only:
+        ablation_desc.append("Strategy 4: Pure Behavioral (Drop Static Tiers)")
+    if not args.stock_features:
+        ablation_desc.append("Ablation: Exclude Stock/Financial Features (No Beta/MACD/Drawdown/Volatility)")
+    if args.drop_low_mi:
+        ablation_desc.append("Drop Low-MI (Noisy)")
+    if args.drop_collinear:
+        ablation_desc.append("Drop Collinear (|r|>=0.90)")
+    if ablation_desc:
         print(f"   Feature Selection Ablation: {' + '.join(ablation_desc)}")
     print(f"   Artifacts Dir: '{artifacts_dir}'")
     print(f"{'='*60}\n")
@@ -252,6 +270,8 @@ def main():
         dataset_kwargs["use_usage_weight"] = args.use_usage_weight
     if args.behavioral_only:
         dataset_kwargs["behavioral_only"] = True
+    if not args.stock_features:
+        dataset_kwargs["stock_features"] = False
     if args.drop_low_mi:
         dataset_kwargs["drop_low_mi"] = True
     if args.drop_collinear:
