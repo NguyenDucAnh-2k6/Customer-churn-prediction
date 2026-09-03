@@ -1,5 +1,6 @@
 """
 Automated EDA Suite Generator: Runs full visualization pipeline and exports summary report.
+Includes deep dive on Stock Quantitative Indicators and Multi-Horizon Behavioral Dynamics.
 """
 
 import os
@@ -16,11 +17,15 @@ from src.eda.distributions import (
     plot_categorical_churn_rates,
     plot_feature_distributions_by_target,
     plot_target_distribution,
+    plot_stock_technical_indicators,
+    plot_behavioral_dynamics,
 )
 from src.eda.timeseries_eda import (
     plot_activity_trends_over_time,
     plot_churn_trend_over_time,
 )
+from src.features.statistical_filtering import generate_univariate_screening_report
+
 
 
 def generate_eda_suite(
@@ -97,7 +102,28 @@ def generate_eda_suite(
         plot_activity_trends_over_time(df, time_col=time_col, output_path=ts_activity_path)
         generated_files.append(ts_activity_path)
 
-    # 8. Write Markdown Summary Report
+    # 8. Financial & Stock Technical Indicators Analysis (if present)
+    stock_fig_path = os.path.join(output_dir, "08_stock_technical_indicators.png")
+    stock_res = plot_stock_technical_indicators(df, target_col=target_col, output_path=stock_fig_path)
+    if stock_res is not None:
+        generated_files.append(stock_fig_path)
+
+    # 9. Multi-Window Behavioral Dynamics Analysis (if present)
+    dyn_fig_path = os.path.join(output_dir, "09_teammate_behavioral_dynamics.png")
+    dyn_res = plot_behavioral_dynamics(df, target_col=target_col, output_path=dyn_fig_path)
+    if dyn_res is not None:
+        generated_files.append(dyn_fig_path)
+
+    # 10. Univariate Statistical Feature Screening (KDE, Categorical, Boxplot)
+    screening_df = generate_univariate_screening_report(
+        X_train=df[[c for c in df.columns if c not in ["customer_id", "Unnamed: 0", target_col]]],
+        y_train=df[target_col],
+    )
+    screening_csv_path = os.path.join(output_dir, "10_univariate_feature_screening.csv")
+    screening_df.to_csv(screening_csv_path, index=False)
+    generated_files.append(screening_csv_path)
+
+    # 11. Write Markdown Summary Report
     report_md_path = os.path.join(output_dir, "eda_summary.md")
     _write_markdown_summary(
         df=df,
@@ -105,7 +131,8 @@ def generate_eda_suite(
         target_col=target_col,
         time_col=time_col,
         df_multi=df_multi,
-        top_corrs=corrs.head(10),
+        top_corrs=corrs.head(15),
+        screening_df=screening_df,
         output_path=report_md_path,
     )
     generated_files.append(report_md_path)
@@ -128,6 +155,7 @@ def _write_markdown_summary(
     time_col: Optional[str],
     df_multi: pd.DataFrame,
     top_corrs: pd.Series,
+    screening_df: pd.DataFrame,
     output_path: str,
 ) -> None:
     """Generate Markdown summary document with key statistics."""
@@ -158,9 +186,28 @@ def _write_markdown_summary(
         direction = "Positive (+)" if raw_corr > 0 else "Negative (-)"
         lines.append(f"| `{feat}` | `{corr_abs:.4f}` | **{direction}** (`{raw_corr:+.4f}`) |")
 
+    # Check for presence of stock indicators and compute their correlations
+    stock_cols = [
+        "RSI_usage", "stoch_k_usage", "engagement_macd",
+        "usage_drawdown_ratio", "active_days_volatility_3m", "peer_usage_zscore", "cohort_relative_strength_30d"
+    ]
+    present_stock = [c for c in stock_cols if c in df.columns]
+    if present_stock:
+        lines.extend([
+            "",
+            "## 📈 3. Quantitative Stock & Market Technical Indicators Analysis",
+            "",
+            "| Stock Technical Indicator | Correlation with Churn | Business Signal Interpretation |",
+            "| :--- | :---: | :--- |",
+        ])
+        for c in present_stock:
+            c_val = float(df[c].corr(df[target_col]))
+            c_dir = "Tăng nguy cơ Churn" if c_val > 0 else "Giảm nguy cơ Churn (Tích cực)"
+            lines.append(f"| `{c}` | `{c_val:+.4f}` | {c_dir} |")
+
     lines.extend([
         "",
-        "## ⚠️ 3. Multicollinearity Detection (|r| >= 0.85)",
+        "## ⚠️ 4. Multicollinearity Detection (|r| >= 0.85)",
         "",
     ])
 
@@ -176,25 +223,56 @@ def _write_markdown_summary(
         for _, row in df_multi.head(10).iterrows():
             lines.append(f"| `{row['feature_1']}` | `{row['feature_2']}` | `{row['abs_correlation']:.4f}` |")
 
+    # 5. Statistical Screening Summary
     lines.extend([
         "",
-        "## 🖼️ 4. Visual Charts Generated",
+        "## 🧪 5. Univariate Statistical Feature Screening (Separability)",
+        "",
+        "Đánh giá độ phân tách đơn biến giữa 2 nhóm Churned và Retained qua 3 tiêu chuẩn thống kê:",
+        "- **KDE D_KS**: 2-Sample Kolmogorov-Smirnov ($D_{KS} \\ge 0.05$ là đạt chuẩn).",
+        "- **Boxplot Cohen's d**: Standardized Mean Difference ($d \\ge 0.08$ hoặc $\\text{IQR Overlap} \\le 90\\%$).",
+        "- **Categorical Cramér's V / IV**: Độ liên thuộc phân loại ($V \\ge 0.03$ hoặc $\\text{IV} \\ge 0.02$).",
+        "",
+        "| Feature | KS Stat | Cohen's d | IQR Overlap | Cramér's V / IV | Overall Signal |",
+        "| :--- | :---: | :---: | :---: | :---: | :---: |",
+    ])
+
+    # Show top strong and weak features
+    for _, row in screening_df.head(12).iterrows():
+        ks_val = f"{row['ks_stat']:.4f}" if pd.notna(row['ks_stat']) else "-"
+        cd_val = f"{row['cohens_d']:.4f}" if pd.notna(row['cohens_d']) else "-"
+        iqr_val = f"{row['iqr_overlap_ratio']:.2%}" if pd.notna(row['iqr_overlap_ratio']) else "-"
+        v_val = f"V={row['cramers_v']:.3f} / IV={row['information_value']:.3f}" if pd.notna(row['cramers_v']) else "-"
+        sig_badge = "🟢 Strong" if row["overall_signal"] == "STRONG" else "🟡 Weak"
+        lines.append(f"| `{row['feature']}` | `{ks_val}` | `{cd_val}` | `{iqr_val}` | `{v_val}` | {sig_badge} |")
+
+    lines.extend([
+        "",
+        "## 🖼️ 6. Visual Charts Generated",
         "",
         "- `01_target_distribution.png`: Biểu đồ phân phối nhãn Churn vs Active.",
         "- `02_correlation_matrix_top.png`: Heatmap ma trận tương quan giữa Top đặc trưng.",
         "- `03_target_correlations.png`: Xếp hạng đặc trưng tương quan với biến mục tiêu.",
-        "- `04_feature_distributions.png`: Boxplot so sánh phân phối giữa 2 nhóm Churned và Retained.",
+        "- `04_feature_distributions.png`: Boxplot/KDE so sánh phân phối giữa 2 nhóm Churned và Retained.",
         "- `05_categorical_churn_rates.png`: Tỷ lệ Churn theo các biến phân loại.",
     ])
 
     if time_col and time_col in df.columns:
         lines.extend([
-            "- `06_timeseries_churn_trend.png`: Biểu đồ xu hướng Churn Rate và số lượng KH qua các tháng.",
-            "- `07_timeseries_activity_trends.png`: Xu hướng dịch chuyển các chỉ số tương tác theo thời gian.",
+            "- `06_timeseries_churn_trend.png`: Xu hướng tỷ lệ rời bỏ theo các mốc snapshot tháng.",
+            "- `07_timeseries_activity_trends.png`: Xu hướng tương tác app trung bình theo thời gian.",
         ])
 
-    lines.append("")
+    if present_stock:
+        lines.append("- `08_stock_technical_indicators.png`: Phân phối các chỉ báo tài chính (RSI, Stochastic, MACD, Volatility, Drawdown) theo nhãn rời bỏ.")
+
+    behavioral_cols = ["total_active_days_7d", "total_active_days_30d", "days_since_last_activity", "orders_roll3m_sum"]
+    if any(c in df.columns for c in behavioral_cols):
+        lines.append("- `09_teammate_behavioral_dynamics.png`: Phân phối các chỉ số hoạt động đa khung thời gian (7d/30d/90d) và CSAT.")
+
+    lines.append("- `10_univariate_feature_screening.csv`: Bảng tổng hợp chẩn đoán toàn diện chỉ số KS, Cohen's d, IQR Overlap và Cramér's V cho mọi đặc trưng.")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"[EDA] Written EDA Summary Report to: '{output_path}'")
+    print(f"[EDA] Saved Markdown Summary Report to: '{output_path}'")
+

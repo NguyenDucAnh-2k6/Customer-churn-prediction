@@ -101,6 +101,54 @@ def parse_args() -> argparse.Namespace:
         help="Ablation: Drop highly collinear/duplicate features (|r| >= 0.90)",
     )
     parser.add_argument(
+        "--filter_kde",
+        "--drop_kde_similar",
+        action="store_true",
+        help="Ablation: Filter out continuous features with near-identical KDE distributions (KS statistic D_KS < ks_threshold)",
+    )
+    parser.add_argument(
+        "--filter_categorical",
+        "--drop_cat_homogeneous",
+        action="store_true",
+        help="Ablation: Filter out categorical features with homogeneous churn rates across categories (Cramér's V < threshold or IV < threshold)",
+    )
+    parser.add_argument(
+        "--filter_boxplot",
+        "--drop_boxplot_overlap",
+        action="store_true",
+        help="Ablation: Filter out features with overlapping boxplots (Cohen's d < threshold & IQR overlap > threshold)",
+    )
+    parser.add_argument(
+        "--ks_threshold",
+        type=float,
+        default=0.05,
+        help="Kolmogorov-Smirnov minimum statistic threshold for --filter_kde (Default: 0.05)",
+    )
+    parser.add_argument(
+        "--cramers_v_threshold",
+        type=float,
+        default=0.03,
+        help="Cramér's V minimum threshold for --filter_categorical (Default: 0.03)",
+    )
+    parser.add_argument(
+        "--iv_threshold",
+        type=float,
+        default=0.02,
+        help="Information Value (IV) minimum threshold for --filter_categorical (Default: 0.02)",
+    )
+    parser.add_argument(
+        "--cohens_d_threshold",
+        type=float,
+        default=0.08,
+        help="Cohen's d minimum standardized mean difference for --filter_boxplot (Default: 0.08)",
+    )
+    parser.add_argument(
+        "--iqr_overlap_threshold",
+        type=float,
+        default=0.90,
+        help="Maximum allowable IQR overlap ratio for --filter_boxplot (Default: 0.90)",
+    )
+    parser.add_argument(
         "--split_strategy",
         type=str,
         default="time_based",
@@ -132,6 +180,20 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         dest="stock_features",
         help="Ablation: Exclude financial & stock-market technical indicators",
+    )
+    parser.add_argument(
+        "--dynamic_contract_features",
+        action="store_true",
+        default=True,
+        help="Include dynamic contract renewal, payment delay, and 30d vs 60d velocity momentum features (Default: True)",
+    )
+    parser.add_argument(
+        "--no_dynamic_contract_features",
+        "--drop_dynamic_contract_features",
+        "--no-dynamic-contract-features",
+        action="store_false",
+        dest="dynamic_contract_features",
+        help="Ablation: Exclude dynamic contract renewal and velocity momentum features",
     )
     parser.add_argument(
         "--db_url",
@@ -210,11 +272,14 @@ def main():
     usage_tag = "_usage" if args.use_usage_weight else ""
     mi_tag = "_noMI" if args.drop_low_mi else ""
     coll_tag = "_noColl" if args.drop_collinear else ""
+    kde_tag = "_filterKDE" if args.filter_kde else ""
+    cat_tag = "_filterCat" if args.filter_categorical else ""
+    box_tag = "_filterBox" if args.filter_boxplot else ""
     behav_tag = "_behavioral" if args.behavioral_only else ""
     stock_tag = "" if args.stock_features else "_nostock"
     metric_tag = f"_{args.metric}" if args.metric != "roc_auc" else ""
-    study_name = args.study_name or f"{model_name}_churn_{dataset_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{stock_tag}{metric_tag}"
-    artifacts_dir = args.artifacts_dir or f"src/models/artifacts/{dataset_name}_{model_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{behav_tag}{stock_tag}{metric_tag}"
+    study_name = args.study_name or f"{model_name}_churn_{dataset_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{kde_tag}{cat_tag}{box_tag}{behav_tag}{stock_tag}{metric_tag}"
+    artifacts_dir = args.artifacts_dir or f"src/models/artifacts/{dataset_name}_{model_name}{strat_tag}{decay_tag}{cust_tag}{usage_tag}{mi_tag}{coll_tag}{kde_tag}{cat_tag}{box_tag}{behav_tag}{stock_tag}{metric_tag}"
 
     print(f"\n{'='*60}")
     print(f"🚀 Starting Experiment: Model='{model_name}' on Dataset='{dataset_name}'")
@@ -239,6 +304,12 @@ def main():
         ablation_desc.append("Drop Low-MI (Noisy)")
     if args.drop_collinear:
         ablation_desc.append("Drop Collinear (|r|>=0.90)")
+    if args.filter_kde:
+        ablation_desc.append(f"Filter KDE Identical (D_KS < {args.ks_threshold})")
+    if args.filter_categorical:
+        ablation_desc.append(f"Filter Categorical Homogeneous (V < {args.cramers_v_threshold} & IV < {args.iv_threshold})")
+    if args.filter_boxplot:
+        ablation_desc.append(f"Filter Boxplot Overlap (d < {args.cohens_d_threshold} & Overlap > {args.iqr_overlap_threshold})")
     if ablation_desc:
         print(f"   Feature Selection Ablation: {' + '.join(ablation_desc)}")
     print(f"   Artifacts Dir: '{artifacts_dir}'")
@@ -272,10 +343,23 @@ def main():
         dataset_kwargs["behavioral_only"] = True
     if not args.stock_features:
         dataset_kwargs["stock_features"] = False
+    if not args.dynamic_contract_features:
+        dataset_kwargs["dynamic_contract_features"] = False
     if args.drop_low_mi:
         dataset_kwargs["drop_low_mi"] = True
     if args.drop_collinear:
         dataset_kwargs["drop_collinear"] = True
+    if args.filter_kde:
+        dataset_kwargs["filter_kde"] = True
+        dataset_kwargs["ks_threshold"] = args.ks_threshold
+    if args.filter_categorical:
+        dataset_kwargs["filter_categorical"] = True
+        dataset_kwargs["cramers_v_threshold"] = args.cramers_v_threshold
+        dataset_kwargs["iv_threshold"] = args.iv_threshold
+    if args.filter_boxplot:
+        dataset_kwargs["filter_boxplot"] = True
+        dataset_kwargs["cohens_d_threshold"] = args.cohens_d_threshold
+        dataset_kwargs["iqr_overlap_threshold"] = args.iqr_overlap_threshold
 
     dataset = DatasetRegistry.get(dataset_name)
     split_result = dataset.load_and_split(**dataset_kwargs)

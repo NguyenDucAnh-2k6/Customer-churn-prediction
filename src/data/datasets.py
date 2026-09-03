@@ -17,6 +17,7 @@ from src.data.static import StaticDataset
 from src.data.latest import PreSplitLatestDataset, GroupStratifiedLatestDataset
 from src.data.pit import PointInTimeTimeSeriesDataset
 from src.data.round3 import Round3Dataset
+from src.data.round3_timeseries import Round3TimeSeriesDataset
 from src.data.registry import DatasetRegistry
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "GroupStratifiedLatestDataset",
     "PointInTimeTimeSeriesDataset",
     "Round3Dataset",
+    "Round3TimeSeriesDataset",
     "compute_dynamic_sample_weights",
     "compute_exponential_decay_weights",
     "apply_feature_filters",

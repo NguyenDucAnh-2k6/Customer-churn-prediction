@@ -2,10 +2,11 @@
 Data Cleaning, Encoding, and Imputation Preprocessing Module.
 
 Handles boolean standardization, auto_renew business rules correction,
-ordinal encoding of subscription tiers, and missing indicator flags.
+ordinal encoding of subscription tiers, missing indicator flags, and
+Strict Train-Only Statistical Imputation (Zero Data Leakage).
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Any
 import numpy as np
 import pandas as pd
 
@@ -15,7 +16,10 @@ def clean_boolean_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     bool_cols = [
         "is_declining_engagement", "reactivation_flag",
-        "has_marketing_click_30d", "has_unresolved_ticket", "is_paid_tier"
+        "has_marketing_click_30d", "has_unresolved_ticket", "is_paid_tier",
+        "is_free_tier", "has_any_activity_7d", "has_any_activity_14d", "has_any_activity_30d",
+        "free_and_inactive_14d", "free_and_inactive_21d", "paid_weak_engagement",
+        "recent_downgrade_and_quiet", "auto_renew_off_paid"
     ]
     for col in bool_cols:
         if col in df.columns:
@@ -75,11 +79,49 @@ def create_missing_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 class DataCleaningTransformer:
-    """Standardizes types, cleans business rules, and imputes missing indicator values."""
+    """Standardizes types, cleans business rules, and imputes missing indicator values.
+    
+    Supports Scikit-Learn .fit() and .transform() to guarantee strict zero-leakage imputation.
+    """
+
+    def __init__(self, strategy: str = "domain_defaults"):
+        self.strategy = strategy
+        self.numeric_medians_: Dict[str, float] = {}
+        self.categorical_modes_: Dict[str, Any] = {}
+        self.is_fitted_ = False
+
+    def fit(self, df: pd.DataFrame, y=None) -> "DataCleaningTransformer":
+        """Learn statistical medians and modes strictly on X_train."""
+        num_cols = df.select_dtypes(include=[np.number]).columns
+        for col in num_cols:
+            if df[col].isna().any():
+                med = float(df[col].median())
+                self.numeric_medians_[col] = 0.0 if np.isnan(med) else med
+
+        cat_cols = df.select_dtypes(include=[object, "string"]).columns
+        for col in cat_cols:
+            if df[col].isna().any():
+                modes = df[col].mode(dropna=True)
+                self.categorical_modes_[col] = modes.iloc[0] if len(modes) > 0 else "Unknown"
+
+        self.is_fitted_ = True
+        return self
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Run full data hygiene pipeline."""
+        """Run full data hygiene pipeline using learned statistics."""
         df = clean_boolean_columns(df)
         df = clean_subscription_rules(df)
         df = create_missing_indicators(df)
+
+        if self.is_fitted_:
+            for col, med in self.numeric_medians_.items():
+                if col in df.columns and df[col].isna().any():
+                    df[col] = df[col].fillna(med)
+            for col, mode in self.categorical_modes_.items():
+                if col in df.columns and df[col].isna().any():
+                    df[col] = df[col].fillna(mode)
+
         return df
+
+    def fit_transform(self, df: pd.DataFrame, y=None) -> pd.DataFrame:
+        return self.fit(df, y).transform(df)

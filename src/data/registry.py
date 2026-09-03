@@ -10,6 +10,7 @@ from src.data.static import StaticDataset
 from src.data.latest import PreSplitLatestDataset, GroupStratifiedLatestDataset
 from src.data.pit import PointInTimeTimeSeriesDataset
 from src.data.round3 import Round3Dataset
+from src.data.round3_timeseries import Round3TimeSeriesDataset
 
 
 class DatasetRegistry:
@@ -54,3 +55,6 @@ DatasetRegistry.register("timeseries_pit")(PointInTimeTimeSeriesDataset)
 DatasetRegistry.register("round3")(Round3Dataset)
 DatasetRegistry.register("round_3")(Round3Dataset)
 DatasetRegistry.register("r3")(Round3Dataset)
+DatasetRegistry.register("round3_timeseries")(Round3TimeSeriesDataset)
+DatasetRegistry.register("r3_timeseries")(Round3TimeSeriesDataset)
+DatasetRegistry.register("timeseries_round3")(Round3TimeSeriesDataset)

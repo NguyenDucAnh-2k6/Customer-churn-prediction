@@ -10,9 +10,9 @@
 ---
 
 ## 📊 1. Thống Kê Tổng Quan Bộ Dữ Liệu
-- **Tổng số khách hàng (Master):** `10,002` dòng × `34` cột
-- **Tập Huấn luyện (Train Set - 80%):** `8,002` dòng × `35` cột (Tỷ lệ Churn: `6.72%`)
-- **Tập Kiểm thử (Test Set - 20%):** `2,000` dòng × `34` cột (Tỷ lệ Churn: `7.70%`)
+- **Tổng số khách hàng (Master):** `10,002` dòng × `66` cột
+- **Tập Huấn luyện (Train Set - 80%):** `8,002` dòng × `67` cột (Tỷ lệ Churn: `6.72%`)
+- **Tập Kiểm thử (Test Set - 20%):** `2,000` dòng × `66` cột (Tỷ lệ Churn: `7.70%`)
 - **Số lượng Folds Cross-Validation:** `5 Folds` (`cv_fold` từ `0` đến `4`)
 - **Tỷ lệ giá trị thiếu (Missing Rate):** `0.00%` trên toàn bộ 34 cột
 

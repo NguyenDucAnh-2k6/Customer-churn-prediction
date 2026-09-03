@@ -11,6 +11,11 @@ from src.features.selection import (
     filter_features_by_mi,
     filter_multicollinear_features,
 )
+from src.features.statistical_filtering import (
+    filter_features_by_kde,
+    filter_features_by_categorical,
+    filter_features_by_boxplot,
+)
 
 
 def compute_dynamic_sample_weights(
@@ -100,12 +105,20 @@ def apply_feature_filters(
     drop_low_mi: bool = False,
     drop_collinear: bool = False,
     behavioral_only: bool = False,
+    filter_kde: bool = False,
+    filter_categorical: bool = False,
+    filter_boxplot: bool = False,
+    ks_threshold: float = 0.05,
+    cramers_v_threshold: float = 0.03,
+    iv_threshold: float = 0.02,
+    cohens_d_threshold: float = 0.08,
+    iqr_overlap_threshold: float = 0.90,
     custom_drop_features: Optional[List[str]] = None,
     df_train: Optional[pd.DataFrame] = None,
     target_col: Optional[str] = None,
     mi_threshold: float = 0.001,
 ) -> List[str]:
-    """Filter feature columns based on Mutual Information (MI), Multicollinearity, and Behavioral settings."""
+    """Filter feature columns based on Mutual Information (MI), Multicollinearity, Statistical Divergence (KDE, Categorical, Boxplot), and Behavioral settings."""
     dropped = set()
 
     if behavioral_only:
@@ -139,6 +152,36 @@ def apply_feature_filters(
             for f in COLLINEAR_PAIRS_DROP:
                 if f in feature_cols:
                     dropped.add(f)
+
+    # 1. Statistical Filtering: KDE Distribution (Kolmogorov-Smirnov Test)
+    if filter_kde and df_train is not None and target_col is not None and target_col in df_train.columns:
+        avail_cols = [c for c in feature_cols if c in df_train.columns and c not in dropped]
+        X_sub = df_train[avail_cols]
+        y_sub = df_train[target_col]
+        _, kde_dropped, _ = filter_features_by_kde(
+            X_sub, y_sub, ks_threshold=ks_threshold, verbose=True
+        )
+        dropped.update(kde_dropped)
+
+    # 2. Statistical Filtering: Categorical Churn Homogeneity (Cramér's V & Information Value)
+    if filter_categorical and df_train is not None and target_col is not None and target_col in df_train.columns:
+        avail_cols = [c for c in feature_cols if c in df_train.columns and c not in dropped]
+        X_sub = df_train[avail_cols]
+        y_sub = df_train[target_col]
+        _, cat_dropped, _ = filter_features_by_categorical(
+            X_sub, y_sub, cramers_v_threshold=cramers_v_threshold, iv_threshold=iv_threshold, verbose=True
+        )
+        dropped.update(cat_dropped)
+
+    # 3. Statistical Filtering: Boxplot Overlap (Cohen's d & IQR Overlap)
+    if filter_boxplot and df_train is not None and target_col is not None and target_col in df_train.columns:
+        avail_cols = [c for c in feature_cols if c in df_train.columns and c not in dropped]
+        X_sub = df_train[avail_cols]
+        y_sub = df_train[target_col]
+        _, box_dropped, _ = filter_features_by_boxplot(
+            X_sub, y_sub, cohens_d_threshold=cohens_d_threshold, iqr_overlap_threshold=iqr_overlap_threshold, verbose=True
+        )
+        dropped.update(box_dropped)
 
     if custom_drop_features:
         for f in custom_drop_features:

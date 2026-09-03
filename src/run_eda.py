@@ -2,14 +2,21 @@
 Unified CLI Entrypoint for Exploratory Data Analysis (EDA).
 
 Usage:
-    # Run EDA on both datasets:
+    # Run EDA on all datasets:
+    python -m src.eda --all
     python -m src.run_eda --all
 
-    # Run EDA only on time-series dataset:
-    python -m src.run_eda --dataset timeseries
+    # Run EDA on Round 3 Point-in-Time dataset:
+    python -m src.eda --dataset round3
 
-    # Run EDA only on static dataset:
-    python -m src.run_eda --dataset static
+    # Run EDA on Round 3 Time-Series dataset:
+    python -m src.eda --dataset round3_timeseries
+
+    # Run EDA on original Time-Series dataset:
+    python -m src.eda --dataset timeseries
+
+    # Run EDA on Static dataset:
+    python -m src.eda --dataset static
 """
 
 import argparse
@@ -41,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         type=str,
         default="all",
-        choices=["timeseries", "static", "latest", "all"],
+        choices=["round3", "round_3", "r3", "round3_timeseries", "r3_timeseries", "timeseries", "static", "latest", "all"],
         help="Dataset to analyze",
     )
     parser.add_argument(
@@ -56,6 +63,40 @@ def parse_args() -> argparse.Namespace:
         help="Base output directory for generated plots and reports",
     )
     return parser.parse_args()
+
+
+def run_round3_eda(base_output_dir: str):
+    data_path = "data/processed/round3/churn_master.csv"
+    if not Path(data_path).exists():
+        data_path = "data/processed/round3/churn_train.csv"
+    print(f"\n[INFO] Loading Round 3 Point-in-Time dataset from '{data_path}'...")
+    df = pd.read_csv(data_path)
+    target_col = "churn" if "churn" in df.columns else "label_churn"
+    output_dir = f"{base_output_dir}/round3_point_in_time"
+    return generate_eda_suite(
+        df=df,
+        dataset_name="round3_point_in_time",
+        target_col=target_col,
+        output_dir=output_dir,
+        time_col=None,
+    )
+
+
+def run_round3_timeseries_eda(base_output_dir: str):
+    data_path = "data/processed/round3_timeseries/churn_timeseries_master.csv"
+    if not Path(data_path).exists():
+        data_path = "data/processed/round3_timeseries/churn_timeseries_train.csv"
+    print(f"\n[INFO] Loading Round 3 Time-Series Panel dataset from '{data_path}'...")
+    df = pd.read_csv(data_path)
+    target_col = "label_churn" if "label_churn" in df.columns else "churn"
+    output_dir = f"{base_output_dir}/round3_timeseries"
+    return generate_eda_suite(
+        df=df,
+        dataset_name="round3_timeseries",
+        target_col=target_col,
+        output_dir=output_dir,
+        time_col="snapshot_month",
+    )
 
 
 def run_timeseries_eda(base_output_dir: str):
@@ -109,14 +150,21 @@ def main():
     args = parse_args()
     start_time = time.time()
     run_all = args.all or args.dataset == "all"
+    dataset_choice = args.dataset.lower()
 
-    if run_all or args.dataset == "timeseries":
+    if run_all or dataset_choice in ["round3", "round_3", "r3"]:
+        run_round3_eda(args.output_dir)
+
+    if run_all or dataset_choice in ["round3_timeseries", "r3_timeseries"]:
+        run_round3_timeseries_eda(args.output_dir)
+
+    if run_all or dataset_choice == "timeseries":
         run_timeseries_eda(args.output_dir)
 
-    if run_all or args.dataset == "static":
+    if run_all or dataset_choice == "static":
         run_static_eda(args.output_dir)
 
-    if run_all or args.dataset == "latest":
+    if run_all or dataset_choice == "latest":
         run_latest_eda(args.output_dir)
 
     elapsed = time.time() - start_time

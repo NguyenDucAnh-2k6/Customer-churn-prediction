@@ -151,7 +151,7 @@ class PreSplitLatestDataset(BaseDataset):
             target_df_for_weights = df_all.loc[train_mask]
         else:
             preprocessor = ChurnFeaturePreprocessor(merge_static_master=True, include_stock_features=stock_features)
-            df_train = preprocessor.transform(df_train)
+            df_train = preprocessor.fit_transform(df_train)
             df_val = preprocessor.transform(df_val)
             df_test = preprocessor.transform(df_test)
 

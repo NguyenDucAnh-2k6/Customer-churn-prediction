@@ -1,6 +1,7 @@
 """
 Feature preprocessing, cleaning, and hybrid enrichment orchestrator.
-Composes modular transformers for data hygiene, velocity dynamics, and financial indicators.
+Composes modular transformers for data hygiene, velocity dynamics, financial indicators, and contract renewal cycles.
+Guarantees strict zero data leakage between train and test.
 """
 
 import os
@@ -11,11 +12,14 @@ import pandas as pd
 from src.features.cleaning import DataCleaningTransformer
 from src.features.velocity import VelocityFeatureGenerator
 from src.features.financial_indicators import FinancialFeatureGenerator
+from src.features.contract_dynamics import compute_contract_dynamics
 
 
 class ChurnFeaturePreprocessor:
     """Master orchestrator pipeline that applies data hygiene, static master merging,
-    velocity features, and financial technical indicators.
+    velocity features, financial technical indicators, and contract renewal dynamics.
+    
+    Guarantees strict zero data leakage by fitting statistics only on train.
     """
 
     def __init__(
@@ -23,12 +27,14 @@ class ChurnFeaturePreprocessor:
         static_ml_path: Optional[str] = "data/churn_ml_dataset.csv",
         merge_static_master: bool = False,
         include_stock_features: bool = True,
+        include_contract_dynamics: bool = True,
         customer_id_col: str = "customer_id",
         snapshot_month_col: str = "snapshot_month",
     ):
         self.static_ml_path = static_ml_path
         self.merge_static_master = merge_static_master
         self.include_stock_features = include_stock_features
+        self.include_contract_dynamics = include_contract_dynamics
         self.customer_id_col = customer_id_col
         self.snapshot_month_col = snapshot_month_col
         self.df_static_master = None
@@ -61,6 +67,12 @@ class ChurnFeaturePreprocessor:
             except Exception as e:
                 print(f"[PREPROCESSOR] Warning: Could not load static master '{self.static_ml_path}': {e}")
 
+    def fit(self, df: pd.DataFrame, y=None) -> "ChurnFeaturePreprocessor":
+        """Fit any statistical transformations strictly on training data."""
+        self.cleaner.fit(df, y)
+        self.financial_gen.fit(df, y)
+        return self
+
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply modular feature transformation pipeline."""
         df = df.copy()
@@ -75,8 +87,15 @@ class ChurnFeaturePreprocessor:
         # Step 3: Velocity, Share, and Acceleration Features
         df = self.velocity_gen.transform(df)
 
-        # Step 4: Financial & Quantitative Technical Indicators (Volatility, MACD, Drawdown, Beta)
+        # Step 4: Contract, Payment Cycle & 30d vs 60d Dynamics
+        if self.include_contract_dynamics:
+            df = compute_contract_dynamics(df)
+
+        # Step 5: Financial & Quantitative Technical Indicators (Volatility, MACD, Drawdown, Beta)
         if self.include_stock_features:
             df = self.financial_gen.transform(df)
 
         return df
+
+    def fit_transform(self, df: pd.DataFrame, y=None) -> pd.DataFrame:
+        return self.fit(df, y).transform(df)

@@ -9,12 +9,13 @@ import pandas as pd
 
 from src.data.base import BaseDataset, SplitResult
 from src.data.weights import apply_feature_filters
+from src.features.preprocessor import ChurnFeaturePreprocessor
 
 
 class Round3Dataset(BaseDataset):
     """
-    Round 3 Point-in-Time 34-feature Customer Dataset (data/processed/round3/).
-    Features: 1 row / customer, rolling 60d + all-time statistics across Silver Lakehouse.
+    Round 3 Point-in-Time Customer Dataset (data/processed/round3/).
+    Features: 1 row / customer, rolling 30d/60d, contract dynamics, recency & stock indicators.
     Zero customer leakage and zero target leakage.
     """
 
@@ -41,6 +42,8 @@ class Round3Dataset(BaseDataset):
         use_cv = kwargs.get("use_cv", False)
         drop_low_mi = kwargs.get("drop_low_mi", False)
         drop_collinear = kwargs.get("drop_collinear", False)
+        stock_features = kwargs.get("stock_features", True)
+        dynamic_contract = kwargs.get("dynamic_contract_features", True)
 
         print(f"[DATASET] Loading Round 3 dataset from '{os.path.dirname(train_path)}'...")
         if not os.path.exists(train_path) or not os.path.exists(test_path):
@@ -50,14 +53,40 @@ class Round3Dataset(BaseDataset):
         df_test_raw = pd.read_csv(test_path)
         print(f"[DATASET] Loaded Train: {len(df_train_raw):,} rows, Test: {len(df_test_raw):,} rows")
 
-        # Exclude non-feature columns
-        non_feature_cols = ["customer_id", target_col, "cv_fold", "Unnamed: 0"]
+        # Feature Preprocessing & Enrichment (Stock Features + Contract Dynamics)
+        preprocessor = ChurnFeaturePreprocessor(
+            merge_static_master=False,
+            include_stock_features=stock_features,
+            include_contract_dynamics=dynamic_contract,
+        )
+        df_train_raw = preprocessor.fit_transform(df_train_raw)
+        df_test_raw = preprocessor.transform(df_test_raw)
+
+        # Exclude non-feature columns and target aliases
+        non_feature_cols = [
+            "customer_id", "churn", "label_churn", "label_churn_30d", "churn_30d",
+            target_col, "cv_fold", "Unnamed: 0", "snapshot_dt", "snapshot_date",
+            "snapshot_month", "churn_reason", "account_status"
+        ]
         feature_cols = [c for c in df_train_raw.columns if c not in non_feature_cols]
 
-        # Categorical column encoding (gender, plan_tier)
-        cat_cols = ["gender", "plan_tier"]
+        from src.features.financial_indicators import STOCK_FEATURE_COLS
+        if not stock_features:
+            dropped_stock = [c for c in feature_cols if c in STOCK_FEATURE_COLS]
+            feature_cols = [c for c in feature_cols if c not in STOCK_FEATURE_COLS]
+            print(f"[ABLATION] Excluded {len(dropped_stock)} Quantitative Stock/Market features in Point-in-Time Round 3.")
+
+        # Categorical column encoding (gender, plan_tier, region, city, subscription_tier)
+        cat_cols = ["gender", "plan_tier", "region", "city", "subscription_tier"]
         for c in cat_cols:
             if c in feature_cols:
+                cats = {val: idx for idx, val in enumerate(df_train_raw[c].dropna().unique())}
+                df_train_raw[c] = df_train_raw[c].map(cats).fillna(-1).astype(int)
+                df_test_raw[c] = df_test_raw[c].map(cats).fillna(-1).astype(int)
+
+        # Ensure all feature_cols are strictly numeric
+        for c in feature_cols:
+            if df_train_raw[c].dtype == object:
                 cats = {val: idx for idx, val in enumerate(df_train_raw[c].dropna().unique())}
                 df_train_raw[c] = df_train_raw[c].map(cats).fillna(-1).astype(int)
                 df_test_raw[c] = df_test_raw[c].map(cats).fillna(-1).astype(int)
@@ -88,6 +117,14 @@ class Round3Dataset(BaseDataset):
             feature_cols=feature_cols,
             drop_low_mi=drop_low_mi,
             drop_collinear=drop_collinear,
+            filter_kde=kwargs.get("filter_kde", False),
+            filter_categorical=kwargs.get("filter_categorical", False),
+            filter_boxplot=kwargs.get("filter_boxplot", False),
+            ks_threshold=kwargs.get("ks_threshold", 0.05),
+            cramers_v_threshold=kwargs.get("cramers_v_threshold", 0.03),
+            iv_threshold=kwargs.get("iv_threshold", 0.02),
+            cohens_d_threshold=kwargs.get("cohens_d_threshold", 0.08),
+            iqr_overlap_threshold=kwargs.get("iqr_overlap_threshold", 0.90),
             df_train=df_train,
             target_col=target_col,
         )
@@ -118,8 +155,10 @@ class Round3Dataset(BaseDataset):
                 "test_path": test_path,
                 "target_col": target_col,
                 "split_type": split_type_name,
-                "strategy": "Round 3: Point-in-Time 34-Feature Customer Stats",
+                "strategy": "Round 3: Point-in-Time Enriched Customer Stats",
                 "train_groups": train_groups,
+                "stock_features": stock_features,
+                "dynamic_contract_features": dynamic_contract,
             },
         )
         result.print_summary()

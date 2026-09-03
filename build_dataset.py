@@ -135,24 +135,19 @@ def build_round3_dataset():
     cust['birth_dt'] = safe_to_datetime(cust['birth_date'])
     cust['last_login_dt'] = safe_to_datetime(cust['last_login_at'])
 
-    # Mốc snapshot Point-in-Time chuẩn:
-    # - Active: Quan sát tại mốc mới nhất của dữ liệu (2026-07-28).
-    # - Churned: Quan sát 30 ngày trước ngày đóng tài khoản (closed_dt - 30d) để thu thập hành vi suy giảm trước churn.
-    pre_churn_snapshot = cust['closed_dt'] - pd.Timedelta(days=30)
-    cust['snapshot_dt'] = np.where(cust['closed_dt'].notna(), pre_churn_snapshot, ref_date)
-    cust['snapshot_dt'] = pd.to_datetime(cust['snapshot_dt'])
-    # Đảm bảo snapshot không đi trước ngày đăng ký
-    cust['snapshot_dt'] = np.maximum(cust['snapshot_dt'], cust['signup_dt'].fillna(ref_date))
+    # Mốc snapshot Point-in-Time ĐỒNG NHẤT (Single Unified Snapshot Date) cho toàn bộ khách hàng:
+    # Tránh triệt để Asymmetric Window Bias & Target Leakage
+    cust['snapshot_dt'] = ref_date
     cust['churn'] = (cust['account_status'] == 'Closed').astype(int)
     
-    # customer_age & tenure
+    # customer_age & tenure tính đồng nhất đến mốc snapshot
     cust['customer_age'] = np.where(cust['birth_dt'].notna(), (cust['snapshot_dt'] - cust['birth_dt']).dt.days // 365, 35.0)
     cust['customer_tenure'] = (cust['snapshot_dt'] - cust['signup_dt']).dt.days.fillna(0).astype(int)
     
     master = cust[['customer_id', 'gender', 'customer_age', 'customer_tenure', 'churn', 'snapshot_dt']].copy()
 
     # 2. Đơn hàng (churn_orders.csv)
-    print("\n--- 2. Processing Orders (60d Stats) ---")
+    print("\n--- 2. Processing Orders (30d & 60d Stats, Recency) ---")
     orders = load_and_dedup('churn_orders.csv')
     orders['order_date_dt'] = safe_to_datetime(orders['order_date'])
     orders = orders.merge(master[['customer_id', 'snapshot_dt']], on='customer_id', how='left')
@@ -160,25 +155,53 @@ def build_round3_dataset():
 
     valid_orders = orders[orders['days_before_snapshot'] >= 0].copy()
     
+    ord_rec = valid_orders.groupby('customer_id').agg(
+        days_since_last_order=('days_before_snapshot', 'min'),
+        total_orders_all_time=('order_id', 'count'),
+        total_order_amount_all_time=('total_amount', 'sum'),
+    ).reset_index()
+
     ord_60 = valid_orders[(valid_orders['days_before_snapshot'] <= 60)].groupby('customer_id').agg(
         total_order_amounts_60d=('total_amount', 'sum'),
         total_orders_60d=('order_id', 'count'),
         avg_order_amount_60d=('total_amount', 'mean')
     ).reset_index()
 
+    ord_30 = valid_orders[(valid_orders['days_before_snapshot'] <= 30)].groupby('customer_id').agg(
+        total_order_amounts_30d=('total_amount', 'sum'),
+        total_orders_30d=('order_id', 'count'),
+        avg_order_amount_30d=('total_amount', 'mean')
+    ).reset_index()
+
+    master = master.merge(ord_rec, on='customer_id', how='left')
     master = master.merge(ord_60, on='customer_id', how='left')
+    master = master.merge(ord_30, on='customer_id', how='left')
+
+    master['days_since_last_order'] = master['days_since_last_order'].fillna(999.0)
+    master['total_orders_all_time'] = master['total_orders_all_time'].fillna(0.0)
+    master['total_order_amount_all_time'] = master['total_order_amount_all_time'].fillna(0.0)
     master['total_order_amounts_60d'] = master['total_order_amounts_60d'].fillna(0.0)
     master['total_orders_60d'] = master['total_orders_60d'].fillna(0.0)
     master['avg_order_amount_60d'] = master['avg_order_amount_60d'].fillna(0.0)
+    master['total_order_amounts_30d'] = master['total_order_amounts_30d'].fillna(0.0)
+    master['total_orders_30d'] = master['total_orders_30d'].fillna(0.0)
+    master['avg_order_amount_30d'] = master['avg_order_amount_30d'].fillna(0.0)
 
     # 3. Thanh toán (churn_payments.csv)
-    print("\n--- 3. Processing Payments (60d Stats) ---")
+    print("\n--- 3. Processing Payments (30d & 60d Stats, Recency) ---")
     payments = load_and_dedup('churn_payments.csv')
     payments['payment_date_dt'] = safe_to_datetime(payments['payment_date'])
     payments = payments.merge(master[['customer_id', 'snapshot_dt']], on='customer_id', how='left')
     payments['days_before_snapshot'] = (payments['snapshot_dt'] - payments['payment_date_dt']).dt.days
     
     valid_pay = payments[payments['days_before_snapshot'] >= 0].copy()
+
+    pay_rec = valid_pay.groupby('customer_id').agg(
+        days_since_last_payment=('days_before_snapshot', 'min'),
+        total_payments_all_time=('payment_id', 'count'),
+        total_payment_amount_all_time=('amount', 'sum'),
+    ).reset_index()
+
     pay_60 = valid_pay[valid_pay['days_before_snapshot'] <= 60].groupby('customer_id').agg(
         total_payment_amounts_60d=('amount', 'sum'),
         total_payments_60d=('payment_id', 'count'),
@@ -191,14 +214,38 @@ def build_round3_dataset():
         0.0
     )
     pay_60 = pay_60.drop(columns=['failed_payments_60d'])
+
+    pay_30 = valid_pay[valid_pay['days_before_snapshot'] <= 30].groupby('customer_id').agg(
+        total_payment_amounts_30d=('amount', 'sum'),
+        total_payments_30d=('payment_id', 'count'),
+        avg_payment_amount_30d=('amount', 'mean'),
+        failed_payments_30d=('status', lambda x: (x == 'Failed').sum())
+    ).reset_index()
+    pay_30['failed_payment_rate_30d'] = np.where(
+        pay_30['total_payments_30d'] > 0,
+        pay_30['failed_payments_30d'] / pay_30['total_payments_30d'],
+        0.0
+    )
+    pay_30 = pay_30.drop(columns=['failed_payments_30d'])
+
+    master = master.merge(pay_rec, on='customer_id', how='left')
     master = master.merge(pay_60, on='customer_id', how='left')
+    master = master.merge(pay_30, on='customer_id', how='left')
+
+    master['days_since_last_payment'] = master['days_since_last_payment'].fillna(999.0)
+    master['total_payments_all_time'] = master['total_payments_all_time'].fillna(0.0)
+    master['total_payment_amount_all_time'] = master['total_payment_amount_all_time'].fillna(0.0)
     master['total_payment_amounts_60d'] = master['total_payment_amounts_60d'].fillna(0.0)
     master['total_payments_60d'] = master['total_payments_60d'].fillna(0.0)
     master['avg_payment_amount_60d'] = master['avg_payment_amount_60d'].fillna(0.0)
     master['failed_payment_rate_60d'] = master['failed_payment_rate_60d'].fillna(0.0)
+    master['total_payment_amounts_30d'] = master['total_payment_amounts_30d'].fillna(0.0)
+    master['total_payments_30d'] = master['total_payments_30d'].fillna(0.0)
+    master['avg_payment_amount_30d'] = master['avg_payment_amount_30d'].fillna(0.0)
+    master['failed_payment_rate_30d'] = master['failed_payment_rate_30d'].fillna(0.0)
 
     # 4. Gói dịch vụ Thuê bao (churn_subscriptions.csv)
-    print("\n--- 4. Processing Subscriptions ---")
+    print("\n--- 4. Processing Subscriptions (Contract Dynamics & Recency) ---")
     subs = load_and_dedup('churn_subscriptions.csv')
     sub_start_col = 'start_date' if 'start_date' in subs.columns else 'created_at'
     subs['created_at_dt'] = safe_to_datetime(subs[sub_start_col])
@@ -214,23 +261,33 @@ def build_round3_dataset():
     sub_feats['plan_tier'] = sub_latest['plan_tier'].fillna('None')
     sub_feats['is_auto_renew'] = sub_latest['auto_renew'].fillna(0).astype(float)
     sub_feats['is_downgrade'] = (sub_latest['change_type'] == 'Downgrade').astype(float)
+    sub_feats['days_until_end_from_snapshot'] = (sub_latest['end_date_dt'] - sub_latest['snapshot_dt']).dt.days.fillna(-999.0)
+    sub_feats['subscription_age_days'] = (sub_latest['snapshot_dt'] - sub_latest['created_at_dt']).dt.days.fillna(0.0)
     sub_feats['subscription_expired'] = (
         (sub_latest['end_date_dt'] < sub_latest['snapshot_dt']) | 
         (sub_latest['status'].isin(['Expired', 'Cancelled']))
     ).astype(int)
+
     master = master.merge(sub_feats, on='customer_id', how='left')
     master['plan_tier'] = master['plan_tier'].fillna('None')
     master['is_auto_renew'] = master['is_auto_renew'].fillna(0.0)
     master['is_downgrade'] = master['is_downgrade'].fillna(0.0)
+    master['days_until_end_from_snapshot'] = master['days_until_end_from_snapshot'].fillna(-999.0)
+    master['subscription_age_days'] = master['subscription_age_days'].fillna(0.0)
     master['subscription_expired'] = master['subscription_expired'].fillna(0)
 
     # 5. CSKH & Khiếu nại CSAT (churn_support_tickets.csv)
-    print("\n--- 5. Processing Support Tickets ---")
+    print("\n--- 5. Processing Support Tickets (30d & 60d Stats, Recency) ---")
     tickets = load_and_dedup('churn_support_tickets.csv')
     tickets['created_at_dt'] = safe_to_datetime(tickets['created_at'])
     tickets = tickets.merge(master[['customer_id', 'snapshot_dt']], on='customer_id', how='left')
     tickets['days_before_snapshot'] = (tickets['snapshot_dt'] - tickets['created_at_dt']).dt.days
     valid_tix = tickets[tickets['days_before_snapshot'] >= 0].copy()
+
+    tix_rec = valid_tix.groupby('customer_id').agg(
+        days_since_last_ticket=('days_before_snapshot', 'min'),
+        total_tickets_all_time=('ticket_id', 'count')
+    ).reset_index()
 
     tix_60 = valid_tix[valid_tix['days_before_snapshot'] <= 60].groupby('customer_id').agg(
         total_tickets_60d=('ticket_id', 'count'),
@@ -242,12 +299,23 @@ def build_round3_dataset():
         0.0
     )
     tix_60 = tix_60.drop(columns=['missing_csat_count_60d'])
+
+    tix_30 = valid_tix[valid_tix['days_before_snapshot'] <= 30].groupby('customer_id').agg(
+        total_tickets_30d=('ticket_id', 'count')
+    ).reset_index()
+
+    master = master.merge(tix_rec, on='customer_id', how='left')
     master = master.merge(tix_60, on='customer_id', how='left')
+    master = master.merge(tix_30, on='customer_id', how='left')
+
+    master['days_since_last_ticket'] = master['days_since_last_ticket'].fillna(999.0)
+    master['total_tickets_all_time'] = master['total_tickets_all_time'].fillna(0.0)
     master['total_tickets_60d'] = master['total_tickets_60d'].fillna(0.0)
     master['missing_csat_rate_60d'] = master['missing_csat_rate_60d'].fillna(0.0)
+    master['total_tickets_30d'] = master['total_tickets_30d'].fillna(0.0)
 
     # 6. Tiếp thị Marketing (churn_marketing_interactions.csv)
-    print("\n--- 6. Processing Marketing Interactions ---")
+    print("\n--- 6. Processing Marketing Interactions (30d & 60d Stats) ---")
     mkt = load_and_dedup('churn_marketing_interactions.csv')
     mkt['sent_at_dt'] = safe_to_datetime(mkt['sent_at'])
     mkt = mkt.merge(master[['customer_id', 'snapshot_dt']], on='customer_id', how='left')
@@ -276,8 +344,20 @@ def build_round3_dataset():
     mkt_60['converted_rate_60d'] = mkt_60['converted_60'] / (mkt_60['total_interactions_60d'] + 1e-5)
     mkt_60 = mkt_60.drop(columns=['opened_60', 'clicked_60', 'converted_60'])
 
+    mkt_30 = valid_mkt[valid_mkt['days_before_snapshot'] <= 30].groupby('customer_id').agg(
+        total_interactions_30d=('interaction_id', 'count'),
+        opened_30=('opened', 'sum'),
+        clicked_30=('clicked', 'sum'),
+        converted_30=('converted', 'sum')
+    ).reset_index()
+    mkt_30['opened_rate_30d'] = mkt_30['opened_30'] / (mkt_30['total_interactions_30d'] + 1e-5)
+    mkt_30['clicked_rate_30d'] = mkt_30['clicked_30'] / (mkt_30['total_interactions_30d'] + 1e-5)
+    mkt_30['converted_rate_30d'] = mkt_30['converted_30'] / (mkt_30['total_interactions_30d'] + 1e-5)
+    mkt_30 = mkt_30.drop(columns=['opened_30', 'clicked_30', 'converted_30'])
+
     master = master.merge(mkt_all, on='customer_id', how='left')
     master = master.merge(mkt_60, on='customer_id', how='left')
+    master = master.merge(mkt_30, on='customer_id', how='left')
 
     master['total_interactions_all_time'] = master['total_interactions_all_time'].fillna(0.0)
     master['opened_rate_all_time'] = master['opened_rate_all_time'].fillna(0.0)
@@ -287,6 +367,10 @@ def build_round3_dataset():
     master['opened_rate_60d'] = master['opened_rate_60d'].fillna(0.0)
     master['clicked_rate_60d'] = master['clicked_rate_60d'].fillna(0.0)
     master['converted_rate_60d'] = master['converted_rate_60d'].fillna(0.0)
+    master['total_interactions_30d'] = master['total_interactions_30d'].fillna(0.0)
+    master['opened_rate_30d'] = master['opened_rate_30d'].fillna(0.0)
+    master['clicked_rate_30d'] = master['clicked_rate_30d'].fillna(0.0)
+    master['converted_rate_30d'] = master['converted_rate_30d'].fillna(0.0)
 
     master['opened_rate_change'] = master['opened_rate_60d'] - master['opened_rate_all_time']
     master['clicked_rate_change'] = master['clicked_rate_60d'] - master['clicked_rate_all_time']
@@ -298,30 +382,40 @@ def build_round3_dataset():
     )
 
     # 7. Sử dụng Ứng dụng (churn_product_usage.csv)
-    print("\n--- 7. Processing Product Usage ---")
+    print("\n--- 7. Processing Product Usage (30d & 60d Stats, Recency) ---")
     usage = load_and_dedup('churn_product_usage.csv')
     usage['event_date_dt'] = safe_to_datetime(usage['event_date'])
     usage = usage.merge(master[['customer_id', 'snapshot_dt']], on='customer_id', how='left')
     usage['days_before_snapshot'] = (usage['snapshot_dt'] - usage['event_date_dt']).dt.days
     valid_usage = usage[usage['days_before_snapshot'] >= 0].copy()
 
-    usage_all = valid_usage.groupby('customer_id').agg(
+    u_rec = valid_usage.groupby('customer_id').agg(
+        days_since_last_usage=('days_before_snapshot', 'min'),
         total_usage_all_time=('usage_id', 'count'),
         avg_usage_duration_all_time=('session_duration_sec', 'mean')
     ).reset_index()
 
-    usage_60 = valid_usage[valid_usage['days_before_snapshot'] <= 60].groupby('customer_id').agg(
+    u_60 = valid_usage[valid_usage['days_before_snapshot'] <= 60].groupby('customer_id').agg(
         total_usage_60d=('usage_id', 'count'),
         avg_usage_duration_60d=('session_duration_sec', 'mean')
     ).reset_index()
 
-    master = master.merge(usage_all, on='customer_id', how='left')
-    master = master.merge(usage_60, on='customer_id', how='left')
+    u_30 = valid_usage[valid_usage['days_before_snapshot'] <= 30].groupby('customer_id').agg(
+        total_usage_30d=('usage_id', 'count'),
+        avg_usage_duration_30d=('session_duration_sec', 'mean')
+    ).reset_index()
 
+    master = master.merge(u_rec, on='customer_id', how='left')
+    master = master.merge(u_60, on='customer_id', how='left')
+    master = master.merge(u_30, on='customer_id', how='left')
+
+    master['days_since_last_usage'] = master['days_since_last_usage'].fillna(999.0)
     master['total_usage_all_time'] = master['total_usage_all_time'].fillna(0.0)
     master['total_usage_60d'] = master['total_usage_60d'].fillna(0.0)
     master['avg_usage_duration_all_time'] = master['avg_usage_duration_all_time'].fillna(0.0)
     master['avg_usage_duration_60d'] = master['avg_usage_duration_60d'].fillna(0.0)
+    master['total_usage_30d'] = master['total_usage_30d'].fillna(0.0)
+    master['avg_usage_duration_30d'] = master['avg_usage_duration_30d'].fillna(0.0)
 
     master['usage_60d_share'] = np.where(
         master['total_usage_all_time'] > 0,
@@ -330,6 +424,23 @@ def build_round3_dataset():
     )
     master['usage_duration_change'] = master['avg_usage_duration_60d'] - master['avg_usage_duration_all_time']
 
+    # 8. Dynamic Velocity & Contract Momentum Features
+    prev_usage_30d = np.maximum(0.0, master['total_usage_60d'] - master['total_usage_30d'])
+    master['usage_velocity_30d_60d'] = master['total_usage_30d'] / (prev_usage_30d + 1.0)
+
+    prev_orders_30d = np.maximum(0.0, master['total_orders_60d'] - master['total_orders_30d'])
+    master['orders_velocity_30d_60d'] = master['total_orders_30d'] / (prev_orders_30d + 1.0)
+
+    prev_pay_30d = np.maximum(0.0, master['total_payments_60d'] - master['total_payments_30d'])
+    master['payments_velocity_30d_60d'] = master['total_payments_30d'] / (prev_pay_30d + 1.0)
+
+    master['contract_churn_risk_score'] = (
+        (1.0 - master['is_auto_renew']) * 2.0 + 
+        master['is_downgrade'] * 2.0 + 
+        master['subscription_expired'] * 3.0
+    )
+    master['is_renewal_imminent_30d'] = ((master['days_until_end_from_snapshot'] >= 0) & (master['days_until_end_from_snapshot'] <= 30)).astype(int)
+
     # Format categorical values & Missing counts
     master['gender'] = master['gender'].fillna('Unknown').astype(str)
     master['plan_tier'] = master['plan_tier'].fillna('None').astype(str)
@@ -337,11 +448,7 @@ def build_round3_dataset():
     # Drop snapshot_dt from master dataset
     master = master.drop(columns=['snapshot_dt'])
 
-    # Sắp xếp thứ tự các cột chuẩn
-    expected_cols = [col for col in SCHEMA_METADATA_ROUND3.keys() if col != 'cv_fold']
-    master = master[expected_cols]
-
-    print(f"\n[INFO] Đã tạo DataFrame sạch: {len(master):,} dòng, {len(master.columns)} cột (Đã loại bỏ 10 cột missing > 15%)")
+    print(f"\n[INFO] Đã tạo DataFrame sạch: {len(master):,} dòng, {len(master.columns)} cột (Không có missing values)")
     return master
 
 def split_and_assign_folds(master_df):

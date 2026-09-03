@@ -11,6 +11,15 @@ from src.features.selection import (
     filter_features_by_mi,
     filter_multicollinear_features,
 )
+from src.features.statistical_filtering import (
+    compute_ks_divergence,
+    filter_features_by_kde,
+    compute_categorical_metrics,
+    filter_features_by_categorical,
+    compute_cohens_d_and_iqr_overlap,
+    filter_features_by_boxplot,
+    generate_univariate_screening_report,
+)
 
 __all__ = [
     "DataCleaningTransformer",
@@ -20,4 +29,12 @@ __all__ = [
     "make_mi_scores",
     "filter_features_by_mi",
     "filter_multicollinear_features",
+    "compute_ks_divergence",
+    "filter_features_by_kde",
+    "compute_categorical_metrics",
+    "filter_features_by_categorical",
+    "compute_cohens_d_and_iqr_overlap",
+    "filter_features_by_boxplot",
+    "generate_univariate_screening_report",
 ]
+
