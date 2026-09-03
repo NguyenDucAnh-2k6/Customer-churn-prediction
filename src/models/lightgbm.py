@@ -13,7 +13,8 @@ import pandas as pd
 from src.data.base import SplitResult
 from src.models.base import BaseModelWrapper
 from src.models.evaluate import extract_feature_importances
-
+import warnings
+warnings.filterwarnings("ignore")
 
 class LightGBMModelWrapper(BaseModelWrapper):
     """Wrapper for LightGBM Classifier with adaptive scale_pos_weight and HPO."""

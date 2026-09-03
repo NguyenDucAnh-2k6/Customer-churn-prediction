@@ -11,12 +11,13 @@ venv/
 ENV/
 
 # Data & Database files
-/data/
 *.csv
 *.parquet
 *.db
 *.sqlite
 *.sqlite3
+.DS_Store
+tracking/
 
 # Model artifacts and logs
 src/models/artifacts/
@@ -24,6 +25,7 @@ artifacts/
 *.log
 catboost_info/
 lightning_logs/
+.vscode/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/

@@ -1,17 +1,9 @@
 import os
-import sys
 import s3fs
 import pyarrow.dataset as ds
 import pyarrow as pa
 import pandas as pd
 from dotenv import load_dotenv
-
-if sys.platform == 'win32':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
 
 load_dotenv()
 
@@ -19,14 +11,12 @@ ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
 SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
 ENDPOINT_URL = os.getenv('ENDPOINT_URL')
 
-# Cấu hình kết nối MinIO
 fs = s3fs.S3FileSystem(
     key=ACCESS_KEY,
     secret=SECRET_KEY,
     client_kwargs={"endpoint_url": ENDPOINT_URL}
 )
 
-# Danh sách 7 bảng Silver trong lqminh/silver/devdb
 tables = [
     'churn_customers',
     'churn_orders',
@@ -41,7 +31,7 @@ os.makedirs('data', exist_ok=True)
 
 for folder in tables:
     print(f"\n{'-'*50}")
-    print(f"[*] Dang tai tu MinIO: lqminh/silver/devdb/{folder}")
+    print(f"⏳ Đang tải từ MinIO: lqminh/silver/devdb/{folder}")
     drive_save_path = f'data/{folder}.csv'
     
     try:
@@ -49,7 +39,7 @@ for folder in tables:
         dataset = ds.dataset(dataset_path, filesystem=fs, format="parquet")
         table = dataset.to_table()
         
-        # Cast timestamp/date thành string để tương thích 100% với pandas
+        # Cast timestamp/date to string if needed to avoid pandas/isoformat errors
         new_schema_fields = []
         for field in table.schema:
             if pa.types.is_timestamp(field.type) or pa.types.is_date(field.type):
@@ -60,17 +50,17 @@ for folder in tables:
         table_safe = table.cast(pa.schema(new_schema_fields))
         df = table_safe.to_pandas()
         
-        # Loại bỏ các cột partition phụ do pyarrow tự thêm nếu có
+        # Drop partition columns if added by pyarrow dataset (year, month) or keep them clean
         for pcol in ['year', 'month']:
             if pcol in df.columns and pcol not in ['signup_year', 'signup_month']:
                 df = df.drop(columns=[pcol])
                 
         df.to_csv(drive_save_path, index=False)
-        print(f"[+] Thanh cong! Da tai {len(df):,} dong, {len(df.columns)} cot -> {drive_save_path}")
-        print(f"    So khach hang unique: {df['customer_id'].nunique() if 'customer_id' in df.columns else 'N/A'}")
+        print(f"✅ Thành công! Đã tải {len(df):,} dòng, {len(df.columns)} cột -> {drive_save_path}")
+        print(f"   Khách hàng unique: {df['customer_id'].nunique() if 'customer_id' in df.columns else 'N/A'}")
         
     except Exception as e:
-        print(f"[-] Loi khi tai {folder}: {e}")
+        print(f"❌ Lỗi khi tải {folder}: {e}")
 
 print(f"\n{'-'*50}")
-print("[+] HOAN TAT TAI DU LIEU TU lqminh/silver/devdb/!")
+print("🎉 HOÀN TẤT TẢI DỮ LIỆU TỪ lqminh/silver/devdb/")
